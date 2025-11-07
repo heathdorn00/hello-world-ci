@@ -115,7 +115,9 @@ app.use((req: Request, res: Response) => {
 });
 
 // Only start server if not in test mode
-let server: any;
+import { Server } from 'http';
+
+let server: Server | undefined;
 if (process.env.NODE_ENV !== 'test') {
   server = app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
@@ -126,9 +128,11 @@ if (process.env.NODE_ENV !== 'test') {
   // Graceful shutdown
   process.on('SIGTERM', () => {
     console.log('SIGTERM signal received: closing HTTP server');
-    server.close(() => {
-      console.log('HTTP server closed');
-    });
+    if (server) {
+      server.close(() => {
+        console.log('HTTP server closed');
+      });
+    }
   });
 }
 
