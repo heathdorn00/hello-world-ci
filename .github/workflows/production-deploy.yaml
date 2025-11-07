@@ -1,0 +1,221 @@
+name: Production CI/CD with Security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Gate 1: Fast Feedback (< 2min)
+  gate-1-fast-feedback:
+    name: "Gate 1: Fast Feedback"
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Lint
+      run: npm run lint
+
+    - name: Type check
+      run: npm run build
+
+    - name: Unit tests
+      run: npm test
+
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(node -p "require('./coverage/coverage-summary.json').total.lines.pct")
+        echo "Coverage: $COVERAGE%"
+        if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+          echo "❌ Coverage $COVERAGE% is below 80%"
+          exit 1
+        fi
+        echo "✅ Coverage $COVERAGE% meets threshold"
+
+  # Gate 2: Security & Build (< 10min)
+  gate-2-security-build:
+    name: "Gate 2: Security & Build"
+    needs: gate-1-fast-feedback
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Check for vulnerabilities
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        format: 'table'
+        exit-code: '1'
+        severity: 'CRITICAL'
+
+    - name: Push Docker image
+      if: github.event_name != 'pull_request'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Sign container image
+      if: github.event_name != 'pull_request'
+      run: |
+        echo "Image signing would happen here with Cosign"
+        echo "cosign sign ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+  # Gate 3: Integration Tests (< 15min)
+  gate-3-integration:
+    name: "Gate 3: Integration Tests"
+    needs: gate-2-security-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build application
+      run: npm run build
+
+    - name: Start application
+      run: |
+        npm start &
+        APP_PID=$!
+        echo "APP_PID=$APP_PID" >> $GITHUB_ENV
+
+    - name: Wait for application
+      run: |
+        for i in {1..30}; do
+          if curl -f http://localhost:3000/health; then
+            echo "✅ Application is healthy"
+            exit 0
+          fi
+          echo "Waiting for application... ($i/30)"
+          sleep 2
+        done
+        echo "❌ Application failed to start"
+        exit 1
+
+    - name: Run integration tests
+      run: |
+        echo "Running integration tests..."
+        curl -X POST http://localhost:3000/greet \
+          -H "Content-Type: application/json" \
+          -d '{"name": "CI/CD"}' | jq .
+
+        curl http://localhost:3000/metrics | grep "http_requests_total"
+
+    - name: Cleanup
+      if: always()
+      run: kill ${{ env.APP_PID }} || true
+
+  # Gate 4: Deploy to Production (manual approval)
+  gate-4-deploy-production:
+    name: "Gate 4: Deploy to Production"
+    needs: [gate-1-fast-feedback, gate-2-security-build, gate-3-integration]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://hello-world.example.com
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Deploy to Kubernetes
+      run: |
+        echo "Deployment would happen here with kubectl apply"
+        echo "kubectl apply -f k8s/"
+        echo "kubectl set image deployment/hello-world-app hello-world=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }} -n hello-world-prod"
+
+    - name: Wait for rollout
+      run: |
+        echo "kubectl rollout status deployment/hello-world-app -n hello-world-prod --timeout=5m"
+
+    - name: Smoke tests
+      run: |
+        echo "Running smoke tests..."
+        echo "curl -f https://hello-world.example.com/health"
+
+    - name: Rollback on failure
+      if: failure()
+      run: |
+        echo "Rolling back deployment..."
+        echo "kubectl rollout undo deployment/hello-world-app -n hello-world-prod"

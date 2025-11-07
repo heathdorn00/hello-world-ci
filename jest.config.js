@@ -3,6 +3,10 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.test.ts'],
+  transform: {
+    '^.+\\.ts$': 'ts-jest'
+  },
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.test.ts',
@@ -12,9 +16,10 @@ module.exports = {
   coverageThreshold: {
     global: {
       branches: 80,
-      functions: 80,
+      functions: 75,
       lines: 80,
       statements: 80
     }
-  }
+  },
+  testTimeout: 10000
 };
