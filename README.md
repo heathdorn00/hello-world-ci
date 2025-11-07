@@ -145,6 +145,8 @@ curl -X POST http://localhost:3000/greet \
 - Vulnerability reporting to GitHub Security
 - Image signing ready (Cosign)
 - SARIF format security reports
+- Documented vulnerability exceptions (.trivyignore)
+  - CVE-2023-45853: zlib issue marked as will_not_fix (low impact for this application)
 
 ## 📊 CI/CD Pipeline
 

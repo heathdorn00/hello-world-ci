@@ -1,0 +1,23 @@
+# Trivy Vulnerability Exceptions
+#
+# This file contains CVEs that are intentionally ignored by Trivy scans.
+# Each exception must be documented with:
+# - CVE ID
+# - Reason for exception
+# - Date added
+# - Review date
+#
+# IMPORTANT: Security exceptions should be reviewed regularly and removed
+# when fixes become available.
+
+# CVE-2023-45853: zlib integer overflow
+# Status: will_not_fix in Debian base image (as of 2025-11-07)
+# Reason: This vulnerability is marked as will_not_fix by the Debian security team.
+#         It requires a crafted input that would trigger integer overflow in zlib
+#         compression functions. Our application does not process untrusted compressed
+#         data that would expose this vulnerability.
+# Impact: Low for this application (no user-controlled compression input)
+# Mitigation: Input validation at application layer; consider alternative base images
+# Added: 2025-11-07
+# Review: 2025-12-07 (monthly review recommended)
+CVE-2023-45853
