@@ -30,8 +30,8 @@ RUN npm ci --include=dev
 ####################
 FROM dependencies AS builder
 
-# Copy source code
-COPY tsconfig.json ./
+# Copy source code and test configuration
+COPY tsconfig.json jest.config.js ./
 COPY src/ ./src/
 
 # Build TypeScript
